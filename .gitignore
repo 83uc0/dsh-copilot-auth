@@ -1,0 +1,15 @@
+node_modules/
+.pnpm-store/
+lib/
+coverage/
+.vitest/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+auth.json
+.credentials.json
+.credentials.yaml
+.copilot/
+.DS_Store

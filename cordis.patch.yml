@@ -1,0 +1,3 @@
+- insert:
+    - id: llm-github-copilot
+      name: '@vincent-raffin/dsh-llm-github-copilot'
