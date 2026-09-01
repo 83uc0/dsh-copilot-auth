@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import '@deepseek-ai/dsh-authorization'
 import '@deepseek-ai/dsh-commands'
 import '@deepseek-ai/dsh-credentials'
@@ -13,6 +14,22 @@ import { ConsumptionTracker, type InputConventionConfig } from './usage-tracker.
 
 export const name = 'llm-github-copilot'
 export const inject = ['llm', 'credentials', 'commands']
+
+const SPIKE_ROUTE = '/llm-github-copilot-spike/status'
+
+type SpikeWebContext = Context & {
+  readonly webServer: {
+    register: (definition: {
+      readonly kind: 'prefix'
+      readonly path: string
+      readonly handler: (request: IncomingMessage, response: ServerResponse) => void
+    }) => () => void
+  }
+}
+
+type SpikeInjectableContext = Context & {
+  readonly inject?: (services: readonly string[], callback: (context: Context) => void) => void
+}
 
 export interface PluginConfig {
   /** Master switch: false disables every consumption-tracking feature. Default true. */
@@ -97,6 +114,24 @@ export function apply(ctx: Context, rawConfig: unknown = {}): void {
     runtime,
     new CopilotCliLoginRunner(),
   )
+
+  const injectableContext = ctx as SpikeInjectableContext
+  injectableContext.inject?.(['webServer'], (webContext) => {
+    const spikeWebContext = webContext as SpikeWebContext
+    spikeWebContext.effect(() => spikeWebContext.webServer.register({
+      kind: 'prefix',
+      path: SPIKE_ROUTE,
+      handler: (_request, response) => {
+        const body = JSON.stringify({ schemaVersion: 1, loaded: true })
+        response.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Length': Buffer.byteLength(body),
+        })
+        response.end(body)
+      },
+    }), 'github-copilot client spike route')
+  })
 
   ctx.effect(function* githubCopilotLifecycle() {
     yield ctx.llm.registerAdapter(['github-copilot'], adapter)
