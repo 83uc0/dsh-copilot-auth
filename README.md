@@ -151,6 +151,8 @@ Without this token the plugin runs in **estimate-only mode** and says so. Billin
 
 The command compares the locally observed nano-AIU total of the period with the billed credits of the same period, proposes the measured divisor (default assumption 1 credit = 10⁹ nano-AIU), and warns when the measurement is implausible (billing lag can skew short periods). The applied divisor and its date are persisted (when storage is enabled) and shown in `/copilot-usage`.
 
+Live verification on 2026-09-01 (personal Pro account): the `copilot_usage.tokenDetails` per-category batch prices in nano-AIU match the official dollar pricing table exactly under a 10⁹ divisor, and the per-request `totalNanoAiu` matched this plugin's local estimate to the nano. The 1e9 default is therefore consistent with real traffic on that date — the calibration command still exists because GitHub can change the divisor without notice.
+
 ### Local storage (opt-in)
 
 Disabled by default: `/copilot-usage` then covers only the **current session** plus any fetched billing data. With `usagePersist: true`, monthly counters persist to a documented file (default `$XDG_STATE_HOME/dsh-llm-github-copilot/usage.json`, override with `usageStorePath`). The file contains only counters, model ids, costs, timestamps and calibration — never prompts or code — and is kept at mode 0600 (verified and repaired on load). Purge everything:

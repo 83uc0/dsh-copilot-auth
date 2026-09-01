@@ -316,6 +316,25 @@ describe('adapter usage tracking', () => {
     expect(logs.filter((message) => message.includes('disjoint'))).toHaveLength(1)
   })
 
+  it('detects the disjoint convention from cache WRITE buckets too (live Auto-mode shape)', async () => {
+    const logs: string[] = []
+    const { runtime, adapter, tracker } = harness({ logs })
+    const call = new MockCall()
+    runtime.calls.push(call)
+    // Live 2026-09-01, Auto mode → gpt-5.6-terra: inputTokens 3 with cacheWriteTokens 3747.
+    call.queue.push({
+      type: 'usage',
+      data: usage({ model: 'gpt-5.6-terra', inputTokens: 3, cacheWriteTokens: 3747, outputTokens: 5 }),
+    })
+    call.queue.push({ type: 'done' })
+    call.queue.close()
+
+    const chunks = await collect(adapter.stream(options('auto')))
+    expect(tracker.convention()).toBe('disjoint')
+    expect(usageChunk(chunks)?.usage).toMatchObject({ inputTokens: 3, cacheWriteTokens: 3747, outputTokens: 5 })
+    expect(logs.filter((message) => message.includes('disjoint'))).toHaveLength(1)
+  })
+
   it('prefers not to subtract cache reads when the convention is ambiguous', async () => {
     const { runtime, adapter, tracker } = harness()
     const call = new MockCall()

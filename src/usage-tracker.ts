@@ -342,10 +342,14 @@ export class ConsumptionTracker {
    */
   observeCall(call: RuntimeUsageData): void {
     if (this.#forcedConvention !== undefined || this.#observedConvention !== 'unknown') return
-    if (call.inputTokens !== undefined && call.cacheReadTokens !== undefined && call.inputTokens < call.cacheReadTokens) {
+    // Disjoint proof: inputTokens below EITHER cache bucket (live observation
+    // 2026-09-01: Auto-mode GPT-5.6 Terra reported inputTokens 3 alongside
+    // cacheWriteTokens 3747 -- only possible with disjoint buckets).
+    const cacheMax = Math.max(call.cacheReadTokens ?? 0, call.cacheWriteTokens ?? 0)
+    if (call.inputTokens !== undefined && call.inputTokens < cacheMax) {
       this.#observedConvention = 'disjoint'
       this.#logOnce(
-        'usage tracking: observed inputTokens < cacheReadTokens, so the provider reports disjoint token buckets; cache reads are reported separately',
+        'usage tracking: observed inputTokens below a cache bucket, so the provider reports disjoint token buckets; cache tokens are reported separately',
       )
     }
   }
