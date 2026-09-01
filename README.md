@@ -199,6 +199,10 @@ Add a `config` object to the plugin row in your profile's `~/.dsh/profiles/web/c
 - The billing endpoint serves the **past 24 months** only.
 - Tracking errors never affect responses: they are isolated, counted, and surfaced in `/copilot-usage`.
 
+### Web UI visibility limitation
+
+The stock DSH Web UI renders output tokens, TTFT, and tokens per second from the native `usage` chunk. It does not render adapter `replayState`, so the model actually used (including Auto resolution), request identifiers, cost, and a multi-model breakdown are only available through `/copilot-usage`.
+
 ## Logout and revocation
 
 In DSH:
