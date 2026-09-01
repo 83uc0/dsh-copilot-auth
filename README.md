@@ -151,7 +151,7 @@ Without this token the plugin runs in **estimate-only mode** and says so. Billin
 
 The command compares the locally observed nano-AIU total of the period with the billed credits of the same period, proposes the measured divisor (default assumption 1 credit = 10⁹ nano-AIU), and warns when the measurement is implausible (billing lag can skew short periods). The applied divisor and its date are persisted (when storage is enabled) and shown in `/copilot-usage`.
 
-Live verification on 2026-09-01 (personal Pro account): the `copilot_usage.tokenDetails` per-category batch prices in nano-AIU match the official dollar pricing table exactly under a 10⁹ divisor, and the per-request `totalNanoAiu` matched this plugin's local estimate to the nano. The 1e9 default is therefore consistent with real traffic on that date — the calibration command still exists because GitHub can change the divisor without notice.
+Manual observation recorded on 2026-09-01: a prior local comparison reported that `copilot_usage.tokenDetails` per-category batch prices in nano-AIU matched the official dollar pricing table under a 10⁹ divisor, and that one observed `totalNanoAiu` matched this plugin's local estimate. This observation was not produced by an automated test or a retained live probe and is not independently reproducible from this repository. The calibration command remains necessary because GitHub can change the divisor without notice.
 
 ### Local storage (opt-in)
 
