@@ -29,6 +29,7 @@ describe('Cordis plugin lifecycle', () => {
       credentials: {},
       authorization,
       commands: { register: (definition: { name: string }) => record(`command:${definition.name}`) },
+      logger: { info: () => {} },
       effect: (factory: () => Generator<unknown, void, unknown>) => {
         for (const effect of factory()) effects.push(effect as () => void | Promise<void>)
       },
@@ -41,10 +42,16 @@ describe('Cordis plugin lifecycle', () => {
       'command:login',
       'command:logout',
       'command:copilot-status',
+      'command:copilot-usage',
+      'command:copilot-usage-calibrate',
+      'command:copilot-usage-reset',
     ])
 
     for (const dispose of effects.reverse()) await dispose()
     expect(disposals).toEqual([
+      'command:copilot-usage-reset',
+      'command:copilot-usage-calibrate',
+      'command:copilot-usage',
       'command:copilot-status',
       'command:logout',
       'command:login',

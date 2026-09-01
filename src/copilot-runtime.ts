@@ -9,6 +9,7 @@ import {
   type ErrorData,
   type ModelInfo,
   type SessionEvent,
+  type SessionEventPayload,
   type Tool,
 } from '@github/copilot-sdk'
 import { AsyncQueue } from './async-queue.js'
@@ -46,6 +47,39 @@ export interface RuntimeCallRequest {
   readonly tools: readonly RuntimeTool[]
 }
 
+/**
+ * Usage metrics of one model API call, flattened from the SDK's
+ * `assistant.usage` event. Every field except `model` is optional: the SDK
+ * documents the event as not stable across all Copilot models, so consumers
+ * must treat absence as "not reported", never as zero.
+ */
+export interface RuntimeUsageData {
+  /** Model identifier actually used for this call (resolves Auto mode). */
+  readonly model: string
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly cacheReadTokens?: number
+  readonly cacheWriteTokens?: number
+  readonly reasoningTokens?: number
+  readonly durationMs?: number
+  readonly timeToFirstTokenMs?: number
+  readonly interTokenLatencyMs?: number
+  /** Raw per-request cost from CAPI `copilot_usage`; the nano→credit conversion is calibrated elsewhere. */
+  readonly nanoAiu?: number
+  readonly apiCallId?: string
+  readonly providerCallId?: string
+  readonly serviceRequestId?: string
+  readonly finishReason?: string
+}
+
+/** Model switch during a session, from the SDK's `session.model_change` event. */
+export interface RuntimeModelChangeData {
+  readonly newModel: string
+  readonly previousModel?: string
+  /** e.g. "rate_limit_auto_switch" for Auto-mode recovery switches. */
+  readonly cause?: string
+}
+
 export type RuntimeEvent =
   | { readonly type: 'text-delta'; readonly id: string; readonly text: string }
   | { readonly type: 'reasoning-delta'; readonly id: string; readonly text: string }
@@ -56,6 +90,8 @@ export type RuntimeEvent =
       readonly name: string
       readonly arguments: Record<string, unknown>
     }
+  | { readonly type: 'usage'; readonly data: RuntimeUsageData }
+  | { readonly type: 'model-change'; readonly data: RuntimeModelChangeData }
   | { readonly type: 'done' }
   | { readonly type: 'error'; readonly error: Error }
 
@@ -200,6 +236,19 @@ class OfficialActiveCall implements ActiveRuntimeCall {
           arguments: event.data.arguments ?? {},
         })
         return
+      case 'assistant.usage':
+        this.#queue.push({ type: 'usage', data: toRuntimeUsage(event.data) })
+        return
+      case 'session.model_change':
+        this.#queue.push({
+          type: 'model-change',
+          data: {
+            newModel: event.data.newModel,
+            ...(event.data.previousModel === undefined ? {} : { previousModel: event.data.previousModel }),
+            ...(event.data.cause === undefined ? {} : { cause: event.data.cause }),
+          },
+        })
+        return
       case 'session.idle':
         this.#queue.push({ type: 'done' })
         this.#queue.close()
@@ -220,6 +269,31 @@ class OfficialActiveCall implements ActiveRuntimeCall {
  * Copilot error". Extract the real message plus classification hints so
  * `classifyCopilotError`'s status/keyword matching still applies downstream.
  */
+/**
+ * Extract the leaf fields of an `assistant.usage` event into an owned, plain
+ * data object. The SDK payload is a live RPC object: only primitives cross
+ * here, and absent fields stay absent (absence is meaningful — see
+ * RuntimeUsageData).
+ */
+export function toRuntimeUsage(data: SessionEventPayload<'assistant.usage'>['data']): RuntimeUsageData {
+  return {
+    model: data.model,
+    ...(data.inputTokens === undefined ? {} : { inputTokens: data.inputTokens }),
+    ...(data.outputTokens === undefined ? {} : { outputTokens: data.outputTokens }),
+    ...(data.cacheReadTokens === undefined ? {} : { cacheReadTokens: data.cacheReadTokens }),
+    ...(data.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: data.cacheWriteTokens }),
+    ...(data.reasoningTokens === undefined ? {} : { reasoningTokens: data.reasoningTokens }),
+    ...(data.duration === undefined ? {} : { durationMs: data.duration }),
+    ...(data.timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs: data.timeToFirstTokenMs }),
+    ...(data.interTokenLatencyMs === undefined ? {} : { interTokenLatencyMs: data.interTokenLatencyMs }),
+    ...(data.copilotUsage === undefined ? {} : { nanoAiu: data.copilotUsage.totalNanoAiu }),
+    ...(data.apiCallId === undefined ? {} : { apiCallId: data.apiCallId }),
+    ...(data.providerCallId === undefined ? {} : { providerCallId: data.providerCallId }),
+    ...(data.serviceRequestId === undefined ? {} : { serviceRequestId: data.serviceRequestId }),
+    ...(data.finishReason === undefined ? {} : { finishReason: data.finishReason }),
+  }
+}
+
 export function toSessionError(data: ErrorData): Error {
   const detail = [data.errorType, data.statusCode, data.errorCode]
     .filter((part) => part !== undefined)

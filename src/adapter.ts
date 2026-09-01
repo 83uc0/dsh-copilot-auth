@@ -8,11 +8,17 @@ import {
   type LlmResolvedModelInfo,
   type Message,
   type ReasoningEffortId,
+  type ReplayEnvelope,
   type StreamChunk,
   type ToolResultBlock,
 } from '@deepseek-ai/dsh-llm'
-import type { ActiveRuntimeCall, CopilotRuntime, RuntimeModel } from './copilot-runtime.js'
+import type {
+  ActiveRuntimeCall,
+  CopilotRuntime,
+  RuntimeModel,
+} from './copilot-runtime.js'
 import { classifyCopilotError } from './errors.js'
+import { toReplayUsage, type ConsumptionTracker, type ResponseUsageSummary } from './usage-tracker.js'
 
 const PROVIDER = 'github-copilot'
 
@@ -98,7 +104,10 @@ export class GitHubCopilotAdapter extends LlmAdapter {
   readonly #pending = new Map<CallId, PendingTool>()
   readonly #active = new Set<ActiveRuntimeCall>()
 
-  constructor(private readonly runtime: CopilotRuntime) {
+  constructor(
+    private readonly runtime: CopilotRuntime,
+    private readonly tracker?: ConsumptionTracker,
+  ) {
     super()
   }
 
@@ -179,9 +188,45 @@ export class GitHubCopilotAdapter extends LlmAdapter {
 
     let nextIndex = 0
     const open = new Map<'text' | 'reasoning', OpenBlock>()
+    const collector = this.tracker?.enabled === true ? this.tracker.startResponse() : undefined
+    let trackingFinalized = false
+    /**
+     * Summarize and record the response's usage, then derive the stream
+     * additions. Tracking must never break a response: any failure is counted
+     * in the tracker's isolation counter and the stream continues without the
+     * usage chunk. Idempotent so error paths can flush a partial observation.
+     */
+    const finalizeTracking = ():
+      | { readonly summary: ResponseUsageSummary; readonly usageChunk: StreamChunk | undefined }
+      | undefined => {
+      const tracker = this.tracker
+      if (tracker === undefined || collector === undefined || trackingFinalized) return undefined
+      trackingFinalized = true
+      if (!collector.hasData) return undefined
+      try {
+        const summary = tracker.summarize(collector, options.model)
+        tracker.recordResponse(summary)
+        const usageChunk: StreamChunk | undefined =
+          summary.usageObserved && summary.tokens !== undefined
+            ? { type: 'usage', usage: summary.tokens }
+            : undefined
+        return { summary, usageChunk }
+      } catch (error) {
+        tracker.recordError('summarize response usage', error)
+        return undefined
+      }
+    }
     try {
       for await (const event of call.events) {
         if (options.signal?.aborted === true) throw options.signal.reason
+        if (event.type === 'usage') {
+          collector?.addCall(event.data)
+          continue
+        }
+        if (event.type === 'model-change') {
+          collector?.addModelChange(event.data)
+          continue
+        }
         if (event.type === 'text-delta' || event.type === 'reasoning-delta') {
           const type = event.type === 'text-delta' ? 'text' : 'reasoning'
           const stale = open.get(type)
@@ -216,20 +261,33 @@ export class GitHubCopilotAdapter extends LlmAdapter {
             block: { type: 'tool-call', id: callId, name: event.name, arguments: argumentsText },
           }
           this.#pending.set(callId, { call, requestId: event.requestId, callId })
+          const toolFinishTracking = finalizeTracking()
+          if (toolFinishTracking?.usageChunk !== undefined) yield toolFinishTracking.usageChunk
           yield { type: 'finish', reason: { kind: 'tool-calls' } }
           return
         }
         if (event.type === 'error') throw event.error
         if (event.type === 'done') {
           yield* closeOpenBlocks(open)
-          yield { type: 'usage', usage: { inputTokens: 0, outputTokens: 0 } }
-          yield { type: 'finish', reason: { kind: 'stop' } }
+          const tracking = finalizeTracking()
+          if (tracking?.usageChunk !== undefined) yield tracking.usageChunk
+          // replayState is reserved for successful responses; tool-call and
+          // error finishes only carry the usage chunk.
+          const replayState: ReplayEnvelope | undefined =
+            tracking === undefined ? undefined : { response: toReplayUsage(tracking.summary) }
+          yield {
+            type: 'finish',
+            reason: { kind: 'stop' },
+            ...(replayState === undefined ? {} : { replayState }),
+          }
           await this.#retire(call)
           return
         }
       }
       throw new Error('GitHub Copilot stream closed before a terminal event')
     } catch (error) {
+      // Flush a partial observation so an interrupted stream is still counted.
+      finalizeTracking()
       await this.#retire(call)
       throw classifyCopilotError(error)
     } finally {

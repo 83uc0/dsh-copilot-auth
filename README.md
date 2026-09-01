@@ -107,6 +107,96 @@ Text and reasoning deltas map to DSH streaming blocks. External SDK tool request
 
 The SDK session uses an empty tool mode and an exact allowlist of DSH declarations. `skipPermission` only suppresses a duplicate SDK prompt: it does not execute the tool or bypass DSH's own permission stack.
 
+## Consumption tracking
+
+The plugin tracks GitHub Copilot consumption from the SDK's own session events (`assistant.usage`, `session.model_change`). Since 2026-06, Copilot is billed in **AI credits** (1 credit = $0.01), priced per token and per model — input, cached input, cache write where applicable, and output — with a long-context tier on some models beyond an input-token threshold. The legacy premium-request multiplier is never shown.
+
+**Per response** (automatic, no configuration): DSH renders the real token counts natively from the adapter's `usage` chunk, and the adapter attaches adapter-private metadata to the response (real model used — including the model Auto mode actually picked — per-call tokens, latency, request ids, raw billed quantity, local estimate). A response that aggregated several model calls lists **every** model with its call count and cost; models are never collapsed into one. Run `/copilot-usage` to see the last response in text form.
+
+**Sources are strictly separated.** Every amount carries its source:
+
+1. `github-billed` / CAPI `copilot_usage`: the per-request billed quantity (`totalNanoAiu`). This is a **raw nano-AIU value**; the nano→credit divisor is not publicly documented, so it is displayed raw with an "uncalibrated conversion" notice until you calibrate it (below). No credit or USD figure derived from it is shown before calibration.
+2. `local-estimate`: computed from the dated, versioned pricing table (`src/pricing-table.ts`, captured 2026-09-01 from the official GitHub Docs). Always marked **ESTIMATED**. A model missing from the table is reported as "unknown pricing" — no rate is ever invented. When the SDK reports no usage for a response, no token counts are invented either; the response is counted as "without SDK usage data".
+3. Nothing, with the reason.
+
+**Monthly cumulative**: `/copilot-usage` shows the current month per model (local aggregates), the billed total when a billing token is configured, the allocation percentage (only when explicitly configured), and the approximate reset date.
+
+```text
+/copilot-usage            # report; fetches the billing report if configured and cache is stale
+/copilot-usage refresh    # force a billing refresh (a hard 1-minute floor still applies)
+```
+
+### Billing reconciliation (optional, official endpoint)
+
+To replace estimates with GitHub-billed monthly figures, the plugin reads the official `GET /users/{username}/settings/billing/ai_credit/usage` endpoint. This needs a **dedicated fine-grained PAT** — never your Copilot OAuth token, which the plugin neither accesses nor widens:
+
+1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate.
+2. Resource owner: yourself. No repository access. Under **Permissions → Account permissions**, set **Plan: Read-only** (if the endpoint answers 403, the plugin logs GitHub's `X-Accepted-GitHub-Permissions` header once to document what is actually required).
+3. Store it alone in a file outside this repository, mode 0600:
+
+```bash
+install -m 600 /dev/null ~/.config/dsh-copilot-billing-token   # then paste the token into it
+```
+
+4. Point the plugin at it via your profile's `cordis.patch.yml` config (see Configuration below): `billingTokenPath`.
+
+Without this token the plugin runs in **estimate-only mode** and says so. Billing fetches happen only from the `/copilot-usage` commands — never per message — and are cached (default and minimum 60 minutes).
+
+### Calibrating the nano-AIU conversion
+
+```text
+/copilot-usage-calibrate            # or: /copilot-usage-calibrate 2026-09
+/copilot-usage-calibrate apply      # applies the proposal only after this explicit confirmation
+```
+
+The command compares the locally observed nano-AIU total of the period with the billed credits of the same period, proposes the measured divisor (default assumption 1 credit = 10⁹ nano-AIU), and warns when the measurement is implausible (billing lag can skew short periods). The applied divisor and its date are persisted (when storage is enabled) and shown in `/copilot-usage`.
+
+### Local storage (opt-in)
+
+Disabled by default: `/copilot-usage` then covers only the **current session** plus any fetched billing data. With `usagePersist: true`, monthly counters persist to a documented file (default `$XDG_STATE_HOME/dsh-llm-github-copilot/usage.json`, override with `usageStorePath`). The file contains only counters, model ids, costs, timestamps and calibration — never prompts or code — and is kept at mode 0600 (verified and repaired on load). Purge everything:
+
+```text
+/copilot-usage-reset          # shows what will be deleted
+/copilot-usage-reset confirm  # deletes the store file and clears in-memory aggregates
+```
+
+### Configuration
+
+Add a `config` object to the plugin row in your profile's `~/.dsh/profiles/web/cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: llm-github-copilot
+      name: '@vincent-raffin/dsh-llm-github-copilot'
+      config:
+        usageTracking: true              # false disables every tracking feature
+        usagePersist: true               # opt-in local storage (default false)
+        billingTokenPath: ~/.config/dsh-copilot-billing-token
+        billingAllocationCredits: 1500   # Copilot Pro; only an explicit value shows a percentage
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `usageTracking` | `true` | `false` disables all consumption tracking and display |
+| `tokenInputConvention` | `auto` | `auto` detects by observation; `disjoint`/`inclusive` force whether `inputTokens` excludes cache reads |
+| `usagePersist` | `false` | Persist monthly counters to a local 0600 JSON file |
+| `usageStorePath` | `$XDG_STATE_HOME/dsh-llm-github-copilot/usage.json` | Store file location (outside the repo) |
+| `billingTokenPath` | — | File containing only the fine-grained billing PAT (0600) |
+| `billingRefreshMinutes` | `60` | Billing report cache TTL; lower values are clamped to 60 |
+| `billingAllocationCredits` | — | Monthly allocation; unset = no percentage shown (Pro default 1 500 is only stated as an assumption) |
+| `billingResetDay` | `1` | Billing-cycle reset day (1–28); always displayed as approximate |
+
+### Limits
+
+- **Estimate ≠ invoice.** The local estimate uses published list prices; the billed amount can differ (discounts, promos, plan-specific pricing, rounding, billing lag). The monthly billed figure from the endpoint is authoritative.
+- **nano-AIU calibration** is measured against one billing period; GitHub may change the divisor without notice. Recalibrate after a Copilot platform update.
+- **Token convention bias**: if the provider folds cache reads into `inputTokens` and no observation proves otherwise, billed input is over-reported (nothing is subtracted on ambiguity). Set `tokenInputConvention` when you know the semantics.
+- **Usage events are not stable across all Copilot models**: responses without an `assistant.usage` event contribute no token counts and are counted as such.
+- **Long-context thresholds** are read as "K = 1000 tokens" from the official table; the threshold compares total prompt-side tokens.
+- The **reset date is derived** (1st of next month, or `billingResetDay`) — the billing endpoint does not expose the cycle anchor — and always labelled approximate.
+- The billing endpoint serves the **past 24 months** only.
+- Tracking errors never affect responses: they are isolated, counted, and surfaced in `/copilot-usage`.
+
 ## Logout and revocation
 
 In DSH:
@@ -138,7 +228,7 @@ Diagnostics pass through a central redactor for bearer credentials, GitHub token
 
 - Input is intentionally declared text-only. DSH image references are not copied or converted into SDK attachments.
 - The official SDK does not expose every stateless LLM option directly; DSH `temperature`, `maxTokens`, and `stop` are currently not forwarded.
-- Token usage events are not stable across all Copilot models, so the adapter currently emits zero-valued usage rather than estimating or misreporting billing.
+- Token usage comes from the SDK's `assistant.usage` events, which are not stable across all Copilot models. When a response carries no usage event, the adapter emits no usage chunk rather than inventing counts; `/copilot-usage` reports how many responses lacked usage. Cost figures are either raw provider quantities (nano-AIU, shown unconverted until calibrated) or local estimates from the dated pricing table — see the consumption tracking section.
 - Tool results are returned as text. Binary/image tool results are represented by DSH's textual projection.
 - `@github/copilot-sdk` is in technical preview and may require an adapter update when its RPC schema changes.
 

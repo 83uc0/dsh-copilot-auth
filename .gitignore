@@ -13,3 +13,8 @@ auth.json
 .credentials.yaml
 .copilot/
 .DS_Store
+
+# Consumption tracking artifacts: never commit the billing PAT or local stats.
+billing-token
+billing-token.*
+usage-store.json
