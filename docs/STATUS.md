@@ -21,14 +21,6 @@ Inspection lecture seule de `dsh-llm-local-token@1.3.2` extrait depuis npm, hors
 - Requete GitHub Copilot reelle, modele Auto reel, compteurs de tokens, nano-AIU, facturation, calibration et endpoint billing.
 - Pipeline de build DSH du client et comportement d'erreur observable dans navigateur.
 
-## Spike client
-
-- Spike ajoute `src/spike-client.ts`, genere par `pnpm build` vers `lib/spike-client.js`, exporte via `./client`; le manifeste suit le contrat observe (`dsh.client.inject` et `platform`, sans `entry`).
-- La route host statique `/llm-github-copilot-spike/status` renvoie `{ schemaVersion: 1, loaded: true }`. Client tente une lecture unique et journalise seulement disponibilite, noms de props et booleens `messageId`/`seq`.
-- Deux slots declares: `conversation.input.right` et `conversation.chat.turnTail`.
-- Verification empirique DSH Web non realisee dans ce depot: aucun profil n'a ete modifie, plugin active ou script DSH execute. Donc chargement effectif, disponibilite de `turnTail`, moment/frequence de rendu, props runtime, identifiant, rechargement et reouverture restent inconnus.
-- La voie de repli demeure le composer `conversation.input.right`, limite a la derniere reponse, si `turnTail` ou son identifiant ne sont pas confirmes.
-
 ## Prochaines etapes
 
 1. Confirmer avec environnement DSH de test contrat `conversation.input.right`, injection et props.
