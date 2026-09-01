@@ -20,7 +20,7 @@ import type {
 import { classifyCopilotError } from './errors.js'
 import { toReplayUsage, type ConsumptionTracker, type ResponseUsageSummary } from './usage-tracker.js'
 
-const PROVIDER = 'github-copilot'
+export const PROVIDER = 'github-copilot-sdk'
 
 interface PendingTool {
   readonly call: ActiveRuntimeCall

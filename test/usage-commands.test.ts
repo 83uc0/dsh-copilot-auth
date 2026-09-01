@@ -63,6 +63,20 @@ function fakeFetch(status: number, body: string, headers: Record<string, string>
 }
 
 describe('usage commands', () => {
+  it('accepts the deprecated alias and canonical login route', async () => {
+    const auth = {
+      beginLogin: async () => 'login started',
+      logout: async () => 'logged out',
+      refreshState: async () => ({ phase: 'refresh-succeeded', login: 'octocat' }),
+    }
+    const commands = commandDefinitions(auth as never)
+    const login = commands.find((command) => command.name === 'login')
+    if (login === undefined) throw new Error('missing login command')
+
+    expect(await login.handler({ rawInput: 'github-copilot', signal: new AbortController().signal, commandId: 'test-command', agent: {}, attachments: [] } as never)).toMatchObject({ kind: 'success' })
+    expect(await login.handler({ rawInput: 'github-copilot-sdk', signal: new AbortController().signal, commandId: 'test-command', agent: {}, attachments: [] } as never)).toMatchObject({ kind: 'success' })
+  })
+
   let dir: string
   let storePath: string
   let tokenPath: string

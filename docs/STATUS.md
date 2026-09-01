@@ -21,6 +21,12 @@ Inspection lecture seule de `dsh-llm-local-token@1.3.2` extrait depuis npm, hors
 - Requete GitHub Copilot reelle, modele Auto reel, compteurs de tokens, nano-AIU, facturation, calibration et endpoint billing.
 - Pipeline de build DSH du client et comportement d'erreur observable dans navigateur.
 
+## Route provider et compatibilite
+
+La route canonique est `github-copilot-sdk` et non `github-copilot`. DSH 0.1.1-rc.2 enregistre deja un provider natif `github-copilot` via le bundle pi-ai charge par `dsh-base`; ce conflit de route bloque le boot si nos deux implémentations partagent le meme nom. Le plugin conserve donc le transport officiel `@github/copilot-sdk` sous une route distincte pour coexister avec l'implémentation native.
+
+L'alias `/login github-copilot` reste accepte mais est deprecie; la commande canonique est `/login github-copilot-sdk`. Les credentials et l'historique d'usage deja stockes restent valides, car les donnees persistees et le plugin identifient toujours le provider historique tandis que la route de registration DSH est renommer.
+
 ## Prochaines etapes
 
 1. Confirmer avec environnement DSH de test contrat `conversation.input.right`, injection et props.

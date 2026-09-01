@@ -10,7 +10,8 @@ import type { ConsumptionTracker } from './usage-tracker.js'
 import type { UsageStore } from './usage-store.js'
 
 function acceptsProvider(rawInput: string): boolean {
-  return rawInput.trim() === 'github-copilot'
+  const provider = rawInput.trim()
+  return provider === 'github-copilot' || provider === 'github-copilot-sdk'
 }
 
 export interface UsageCommandDeps {
@@ -38,11 +39,11 @@ export function commandDefinitions(auth: CopilotAuthController, usage?: UsageCom
   const commands: CommandDefinition[] = [
     {
       name: 'login',
-      description: 'Log in to an LLM provider (github-copilot)',
-      input: { hint: 'github-copilot' },
+      description: 'Log in to an LLM provider (github-copilot-sdk)',
+      input: { hint: 'github-copilot-sdk' },
       handler: async ({ rawInput, signal }) => {
         if (!acceptsProvider(rawInput)) {
-          return { kind: 'error', text: 'Usage: /login github-copilot' }
+          return { kind: 'error', text: 'Usage: /login github-copilot-sdk' }
         }
         try {
           const notices: string[] = []
@@ -60,11 +61,11 @@ export function commandDefinitions(auth: CopilotAuthController, usage?: UsageCom
     },
     {
       name: 'logout',
-      description: 'Log out from an LLM provider (github-copilot)',
-      input: { hint: 'github-copilot' },
+      description: 'Log out from an LLM provider (github-copilot-sdk)',
+      input: { hint: 'github-copilot-sdk' },
       handler: async ({ rawInput, signal }) => {
         if (!acceptsProvider(rawInput)) {
-          return { kind: 'error', text: 'Usage: /logout github-copilot' }
+          return { kind: 'error', text: 'Usage: /logout github-copilot-sdk' }
         }
         try {
           return { kind: 'success', text: await auth.logout(signal) }

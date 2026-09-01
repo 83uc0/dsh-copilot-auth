@@ -18,7 +18,7 @@ export function classifyCopilotError(error: unknown): LlmError {
   const message = safeErrorMessage(error)
   const status = statusFromText(message)
   if (status === 401 || /not authenticated|login required|unauthori[sz]ed/i.test(message)) {
-    return new LlmError('GitHub Copilot authentication is required; run /login github-copilot', 'AUTH_REQUIRED', {
+    return new LlmError('GitHub Copilot authentication is required; run /login github-copilot-sdk', 'AUTH_REQUIRED', {
       status: 401,
       cause: error,
     })

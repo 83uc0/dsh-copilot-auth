@@ -66,12 +66,18 @@ dsh plugin --profile web remove @vincent-raffin/dsh-llm-github-copilot
 
 Plugin unload unregisters the route, commands, and the optional native authorization flow when that DSH service exists; it also aborts retained tool-call sessions, disconnects SDK sessions, and stops the SDK child process.
 
+## Route names and compatibility
+
+The canonical provider route is `github-copilot-sdk`, not `github-copilot`. DSH 0.1.1-rc.2 already registers a native `github-copilot` route from the bundled `@earendil-works/pi-ai` provider through `dsh-base`, so the two implementations are in conflict at boot if they share the same route name. This adapter keeps the official `@github/copilot-sdk` CLI transport under its own route to coexist with the native pi-ai implementation.
+
+The deprecated `/login github-copilot` alias remains accepted for compatibility, but the canonical command is `/login github-copilot-sdk`. Existing credentials and historical usage remain valid because the plugin intentionally keeps the persisted credential key and usage metadata under the legacy provider identity while the registered runtime route is renamed.
+
 ## Login
 
 In the DSH composer, run:
 
 ```text
-/login github-copilot
+/login github-copilot-sdk
 ```
 
 The command starts the official CLI web flow directly. When a DSH `authorization` service is present, the same operation is additionally exposed through its native flow registry; the stock Web profile does not provide that optional service, so plugin activation never waits for it. Complete authorization in the browser that opens. On success, DSH writes only the non-secret account-state record.

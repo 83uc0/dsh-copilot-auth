@@ -64,7 +64,7 @@ class MockRuntime implements CopilotRuntime {
 
 function options(messages: Message[] = [createUserMessage({ content: [{ type: 'text', text: 'Hello' }], source: { kind: 'user' } })]): GenerateOptions {
   return {
-    provider: 'github-copilot',
+    provider: 'github-copilot-sdk',
     model: 'gpt-test',
     messages,
     tools: [{ name: 'weather', description: 'Get weather', parameters: { type: 'object' } }],
@@ -81,9 +81,9 @@ describe('GitHubCopilotAdapter', () => {
   it('advertises only enabled account-authorized models and rejects arbitrary ids', async () => {
     const runtime = new MockRuntime()
     const adapter = new GitHubCopilotAdapter(runtime)
-    expect((await adapter.listModels('github-copilot')).map((model) => model.id)).toEqual(['gpt-test'])
-    await expect(adapter.resolveModel('github-copilot', 'disabled')).rejects.toMatchObject({ code: 'MODEL_NOT_AUTHORIZED' })
-    await expect(adapter.resolveModel('github-copilot', 'invented')).rejects.toMatchObject({ code: 'MODEL_NOT_AUTHORIZED' })
+    expect((await adapter.listModels('github-copilot-sdk')).map((model) => model.id)).toEqual(['gpt-test'])
+    await expect(adapter.resolveModel('github-copilot-sdk', 'disabled')).rejects.toMatchObject({ code: 'MODEL_NOT_AUTHORIZED' })
+    await expect(adapter.resolveModel('github-copilot-sdk', 'invented')).rejects.toMatchObject({ code: 'MODEL_NOT_AUTHORIZED' })
   })
 
   it('maps text and reasoning streaming events to DSH blocks', async () => {

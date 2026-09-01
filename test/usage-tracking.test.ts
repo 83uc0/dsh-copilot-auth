@@ -58,7 +58,7 @@ class MockRuntime implements CopilotRuntime {
 
 function options(model = 'gpt-5.4'): GenerateOptions {
   const messages: Message[] = [createUserMessage({ content: [{ type: 'text', text: 'Hello' }], source: { kind: 'user' } })]
-  return { provider: 'github-copilot', model, messages, tools: [] }
+  return { provider: 'github-copilot-sdk', model, messages, tools: [] }
 }
 
 async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {

@@ -3,7 +3,7 @@ import '@deepseek-ai/dsh-authorization'
 import '@deepseek-ai/dsh-commands'
 import '@deepseek-ai/dsh-credentials'
 import '@deepseek-ai/dsh-llm'
-import { GitHubCopilotAdapter } from './adapter.js'
+import { GitHubCopilotAdapter, PROVIDER } from './adapter.js'
 import { CopilotAuthController } from './auth.js'
 import { BillingReportClient } from './billing-report.js'
 import { commandDefinitions } from './commands.js'
@@ -99,7 +99,7 @@ export function apply(ctx: Context, rawConfig: unknown = {}): void {
   )
 
   ctx.effect(function* githubCopilotLifecycle() {
-    yield ctx.llm.registerAdapter(['github-copilot'], adapter)
+    yield ctx.llm.registerAdapter([PROVIDER], adapter)
     if (authorization !== undefined) yield authorization.registerFlow(auth.flow())
     for (const command of commandDefinitions(auth, {
       tracker,

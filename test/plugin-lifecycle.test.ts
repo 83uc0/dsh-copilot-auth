@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
+import { PROVIDER } from '../src/adapter.js'
 import { apply, inject } from '../src/index.js'
 
 describe('Cordis plugin lifecycle', () => {
@@ -16,11 +17,13 @@ describe('Cordis plugin lifecycle', () => {
       return () => disposals.push(name)
     }
     const authorization = { registerFlow: () => record('authorization') }
+    let adapterRegistrations = 0
     const context = {
       get: (service: string) => service === 'authorization' ? authorization : undefined,
       llm: {
         registerAdapter: (providers: string[]) => {
-          expect(providers).toEqual(['github-copilot'])
+          adapterRegistrations += 1
+          expect(providers).toEqual([PROVIDER])
           const dispose = record('adapter') as (() => void) & { replace(providers: string[]): void }
           dispose.replace = () => {}
           return dispose
@@ -36,6 +39,8 @@ describe('Cordis plugin lifecycle', () => {
     } as unknown as Context
 
     apply(context)
+    expect(adapterRegistrations).toBe(1)
+    expect(PROVIDER).toBe('github-copilot-sdk')
     expect(registrations).toEqual([
       'adapter',
       'authorization',
