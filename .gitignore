@@ -18,3 +18,7 @@ auth.json
 billing-token
 billing-token.*
 usage-store.json
+
+# One-off filesystem write probes; never version them.
+.write-probe
+.write-probe-current
