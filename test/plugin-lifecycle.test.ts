@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
+import { PROVIDER } from '../src/adapter.js'
 import { apply, inject } from '../src/index.js'
 
 describe('Cordis plugin lifecycle', () => {
@@ -16,11 +17,13 @@ describe('Cordis plugin lifecycle', () => {
       return () => disposals.push(name)
     }
     const authorization = { registerFlow: () => record('authorization') }
+    let adapterRegistrations = 0
     const context = {
       get: (service: string) => service === 'authorization' ? authorization : undefined,
       llm: {
         registerAdapter: (providers: string[]) => {
-          expect(providers).toEqual(['github-copilot'])
+          adapterRegistrations += 1
+          expect(providers).toEqual([PROVIDER])
           const dispose = record('adapter') as (() => void) & { replace(providers: string[]): void }
           dispose.replace = () => {}
           return dispose
@@ -29,22 +32,31 @@ describe('Cordis plugin lifecycle', () => {
       credentials: {},
       authorization,
       commands: { register: (definition: { name: string }) => record(`command:${definition.name}`) },
+      logger: { info: () => {} },
       effect: (factory: () => Generator<unknown, void, unknown>) => {
         for (const effect of factory()) effects.push(effect as () => void | Promise<void>)
       },
     } as unknown as Context
 
     apply(context)
+    expect(adapterRegistrations).toBe(1)
+    expect(PROVIDER).toBe('github-copilot-sdk')
     expect(registrations).toEqual([
       'adapter',
       'authorization',
       'command:login',
       'command:logout',
       'command:copilot-status',
+      'command:copilot-usage',
+      'command:copilot-usage-calibrate',
+      'command:copilot-usage-reset',
     ])
 
     for (const dispose of effects.reverse()) await dispose()
     expect(disposals).toEqual([
+      'command:copilot-usage-reset',
+      'command:copilot-usage-calibrate',
+      'command:copilot-usage',
       'command:copilot-status',
       'command:logout',
       'command:login',
