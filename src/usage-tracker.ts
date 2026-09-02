@@ -44,6 +44,7 @@ export interface ModelChangeRecord {
 export interface ResponseUsageSummary {
   readonly at: string
   readonly requestedModel: string
+  readonly responseText?: string
   /** One entry per `assistant.usage` event; several models may appear after an Auto-mode switch. */
   readonly calls: readonly RuntimeUsageData[]
   readonly modelChanges: readonly ModelChangeRecord[]
@@ -148,6 +149,7 @@ const MODEL_CHANGES_CAP = 50
 export class ResponseUsageCollector {
   readonly #calls: RuntimeUsageData[] = []
   readonly #changes: ModelChangeRecord[] = []
+  #responseText = ''
 
   constructor(private readonly now: () => Date) {}
 
@@ -162,6 +164,10 @@ export class ResponseUsageCollector {
       ...(data.previousModel === undefined ? {} : { previousModel: data.previousModel }),
       ...(data.cause === undefined ? {} : { cause: data.cause }),
     })
+  }
+
+  addText(text: string): void {
+    this.#responseText += text
   }
 
   get callCount(): number {
@@ -254,6 +260,7 @@ export class ResponseUsageCollector {
     return {
       at: this.now().toISOString(),
       requestedModel,
+      ...(this.#responseText === '' ? {} : { responseText: this.#responseText }),
       calls,
       modelChanges: [...this.#changes],
       usageObserved,

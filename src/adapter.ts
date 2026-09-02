@@ -243,6 +243,7 @@ export class GitHubCopilotAdapter extends LlmAdapter {
             yield { type: 'block-start', index: block.index, blockType: type }
           }
           block.text += event.text
+          if (event.type === 'text-delta') collector?.addText(event.text)
           yield event.type === 'text-delta'
             ? { type: 'text-delta', index: block.index, text: event.text }
             : { type: 'reasoning-delta', index: block.index, text: event.text }
