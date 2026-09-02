@@ -302,11 +302,12 @@ export function toSessionError(data: ErrorData): Error {
   return new Error(detail.length > 0 ? `${message} (${detail})` : message)
 }
 
-function toRuntimeModel(model: ModelInfo): RuntimeModel {
+export function toRuntimeModel(model: ModelInfo): RuntimeModel {
+  const isSyntheticAuto = model.id === 'auto' || model.name === 'Auto'
   return {
     id: model.id,
     name: model.name,
-    enabled: model.policy?.state !== 'disabled' && model.policy?.state !== 'unconfigured',
+    enabled: isSyntheticAuto || model.policy?.state !== 'disabled',
     contextWindow: model.capabilities.limits.max_context_window_tokens,
     vision: model.capabilities.supports.vision,
     reasoningEfforts: model.supportedReasoningEfforts ?? [],
@@ -399,7 +400,7 @@ export class OfficialCopilotRuntime implements CopilotRuntime {
     const resolvedPath = resolveCliPath(executable, env)
     this.#client = new CopilotClient({
       connection: resolvedPath === undefined ? RuntimeConnection.forStdio() : RuntimeConnection.forStdio({ path: resolvedPath }),
-      mode: 'empty',
+      mode: 'copilot-cli',
       workingDirectory,
       baseDirectory,
       env,
@@ -425,7 +426,8 @@ export class OfficialCopilotRuntime implements CopilotRuntime {
 
   async listModels(): Promise<readonly RuntimeModel[]> {
     await this.start()
-    return (await this.#client.listModels()).map(toRuntimeModel).filter((model) => model.enabled)
+    const rawModels = await this.#client.listModels()
+    return rawModels.map(toRuntimeModel).filter((model) => model.enabled)
   }
 
   async startCall(request: RuntimeCallRequest): Promise<ActiveRuntimeCall> {

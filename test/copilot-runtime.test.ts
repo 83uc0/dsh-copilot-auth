@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { memoizeAsync, resolveCliPath, toSdkTools, toSessionError } from '../src/copilot-runtime.js'
+import { memoizeAsync, resolveCliPath, toRuntimeModel, toSdkTools, toSessionError } from '../src/copilot-runtime.js'
 
 const CLI_NAME = process.platform === 'win32' ? 'copilot.cmd' : 'copilot'
 
@@ -57,6 +57,77 @@ describe('toSessionError', () => {
   it('redacts secret-shaped content in the underlying message', () => {
     const error = toSessionError({ errorType: 'authorization', message: 'Rejected Bearer super-secret', statusCode: 403 })
     expect(error.message).not.toContain('super-secret')
+  })
+})
+
+describe('toRuntimeModel', () => {
+  const capabilities = {
+    supports: { vision: false, reasoningEffort: false },
+    limits: { max_context_window_tokens: 128_000 },
+  }
+
+  it('treats enabled models as selectable while preserving identity', () => {
+    const model = toRuntimeModel({
+      id: 'claude-sonnet-4.5',
+      name: 'Claude Sonnet 4.5',
+      capabilities,
+      policy: { state: 'enabled', terms: 'user' },
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
+      defaultReasoningEffort: 'medium',
+    })
+
+    expect(model).toMatchObject({
+      id: 'claude-sonnet-4.5',
+      name: 'Claude Sonnet 4.5',
+      enabled: true,
+      reasoningEfforts: ['low', 'medium', 'high'],
+      defaultReasoningEffort: 'medium',
+    })
+  })
+
+  it('keeps unconfigured models visible because they are usable when not explicitly disabled', () => {
+    const model = toRuntimeModel({
+      id: 'gpt-5.6-terra',
+      name: 'GPT-5.6 Terra',
+      capabilities,
+      policy: { state: 'unconfigured', terms: 'not set' },
+    })
+
+    expect(model).toMatchObject({
+      id: 'gpt-5.6-terra',
+      name: 'GPT-5.6 Terra',
+      enabled: true,
+    })
+  })
+
+  it('filters out models explicitly disabled by policy', () => {
+    const model = toRuntimeModel({
+      id: 'grok-4.6',
+      name: 'Grok 4.6',
+      capabilities,
+      policy: { state: 'disabled', terms: 'opt-out' },
+    })
+
+    expect(model).toMatchObject({
+      id: 'grok-4.6',
+      name: 'Grok 4.6',
+      enabled: false,
+    })
+  })
+
+  it('keeps the synthetic Auto model available without mutating its identifier or name', () => {
+    const model = toRuntimeModel({
+      id: 'auto',
+      name: 'Auto',
+      capabilities,
+      policy: { state: 'unconfigured', terms: 'synthetic' },
+    })
+
+    expect(model).toMatchObject({
+      id: 'auto',
+      name: 'Auto',
+      enabled: true,
+    })
   })
 })
 

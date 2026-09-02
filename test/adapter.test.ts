@@ -53,7 +53,7 @@ class MockRuntime implements CopilotRuntime {
   async start(): Promise<void> {}
   async stop(): Promise<void> { this.stopped = true }
   async getAuthStatus(): Promise<RuntimeAuthStatus> { return { isAuthenticated: true, login: 'octocat' } }
-  async listModels(): Promise<readonly RuntimeModel[]> { return [MODEL, { ...MODEL, id: 'disabled', enabled: false }] }
+  async listModels(): Promise<readonly RuntimeModel[]> { return [MODEL, { ...MODEL, id: 'enabled-2', name: 'GPT Other', enabled: true }] }
   async startCall(request: RuntimeCallRequest): Promise<ActiveRuntimeCall> {
     this.requests.push(request)
     const call = this.calls.shift()
@@ -81,7 +81,7 @@ describe('GitHubCopilotAdapter', () => {
   it('advertises only enabled account-authorized models and rejects arbitrary ids', async () => {
     const runtime = new MockRuntime()
     const adapter = new GitHubCopilotAdapter(runtime)
-    expect((await adapter.listModels('github-copilot-sdk')).map((model) => model.id)).toEqual(['gpt-test'])
+    expect((await adapter.listModels('github-copilot-sdk')).map((model) => model.id)).toEqual(['gpt-test', 'enabled-2'])
     await expect(adapter.resolveModel('github-copilot-sdk', 'disabled')).rejects.toMatchObject({ code: 'MODEL_NOT_AUTHORIZED' })
     await expect(adapter.resolveModel('github-copilot-sdk', 'invented')).rejects.toMatchObject({ code: 'MODEL_NOT_AUTHORIZED' })
   })

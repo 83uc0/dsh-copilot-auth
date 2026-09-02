@@ -119,7 +119,7 @@ export class GitHubCopilotAdapter extends LlmAdapter {
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     this.providerInfo(provider)
     try {
-      return (await this.runtime.listModels()).filter((model) => model.enabled).map(modelInfo)
+      return (await this.runtime.listModels()).map(modelInfo)
     } catch (error) {
       throw classifyCopilotError(error)
     }
