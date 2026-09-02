@@ -13,6 +13,58 @@ import { ConsumptionTracker, type InputConventionConfig } from './usage-tracker.
 
 export const name = 'llm-github-copilot'
 export const inject = ['llm', 'credentials', 'commands']
+const USAGE_ROUTE = '/github-copilot/usage'
+
+function sendJson(res: { writeHead(status: number, headers: Record<string, string>): void; end(body: string): void }, status: number, value: unknown): void {
+  const body = JSON.stringify(value)
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Content-Length': String(Buffer.byteLength(body)),
+  })
+  res.end(body)
+}
+
+export function clientUsageSnapshot(
+  tracker: ConsumptionTracker,
+  allocationCredits: number | undefined,
+  billingConfigured: boolean,
+  now = new Date(),
+): Record<string, unknown> {
+  const snapshot = tracker.snapshot()
+  const period = now.toISOString().slice(0, 7)
+  const last = snapshot.recentResponses.at(-1)
+  const response = last === undefined ? null : {
+    at: last.at,
+    requestedModel: last.requestedModel,
+    ...(last.responseText === undefined ? {} : { text: last.responseText }),
+    model: last.calls.at(-1)?.model,
+    calls: last.calls.map((call) => ({
+      model: call.model,
+      ...(call.inputTokens === undefined ? {} : { inputTokens: call.inputTokens }),
+      ...(call.cacheReadTokens === undefined ? {} : { cachedTokens: call.cacheReadTokens }),
+      ...(call.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: call.cacheWriteTokens }),
+      ...(call.outputTokens === undefined ? {} : { outputTokens: call.outputTokens }),
+      ...(call.durationMs === undefined ? {} : { durationMs: call.durationMs }),
+      ...(call.timeToFirstTokenMs === undefined ? {} : { ttftMs: call.timeToFirstTokenMs }),
+    })),
+    ...(last.nanoAiuTotal === undefined ? {} : { nanoAiu: last.nanoAiuTotal }),
+    ...(last.estimate === undefined ? {} : { estimatedCredits: last.estimate.totalCredits, estimatedUsd: last.estimate.totalUsd }),
+    status: last.nanoAiuTotal !== undefined && snapshot.calibration.state !== 'calibrated' ? 'UNCALIBRATED' : last.estimate === undefined ? 'UNCALIBRATED' : 'ESTIMATED',
+  }
+  const month = tracker.month(period)
+  return {
+    schemaVersion: 1,
+    enabled: snapshot.enabled,
+    response,
+    session: { responses: snapshot.responses, modelCalls: snapshot.modelCalls, nanoAiu: snapshot.nanoAiuTotal, estimatedCredits: snapshot.estimatedCredits, estimatedUsd: snapshot.estimatedUsd },
+    month: month === undefined ? null : { responses: month.responses, modelCalls: month.modelCalls, nanoAiu: month.nanoAiuTotal, estimatedCredits: month.estimatedCredits, estimatedUsd: month.estimatedUsd },
+    ...(allocationCredits === undefined ? {} : { allocationCredits, allocationPercent: month === undefined ? 0 : (month.estimatedCredits / allocationCredits) * 100 }),
+    calibration: snapshot.calibration.state,
+    billing: billingConfigured ? 'unavailable' : 'not-configured',
+    fetchedAt: now.toISOString(),
+  }
+}
 
 export interface PluginConfig {
   /** Master switch: false disables every consumption-tracking feature. Default true. */
@@ -97,6 +149,18 @@ export function apply(ctx: Context, rawConfig: unknown = {}): void {
     runtime,
     new CopilotCliLoginRunner(),
   )
+
+  if (typeof (ctx as any).inject === 'function') ctx.inject(['webServer'], (wctx: any) => {
+    wctx.effect(() => wctx.webServer.register({
+      kind: 'prefix',
+      path: USAGE_ROUTE,
+      handler: (req: { method?: string; url?: string }, res: { writeHead(status: number, headers: Record<string, string>): void; end(body: string): void }) => {
+        const path = new URL(req.url ?? '/', 'http://localhost').pathname.slice(USAGE_ROUTE.length).replace(/^\/+/, '')
+        if (req.method !== 'GET' || path !== '') return sendJson(res, 404, { error: 'unknown route' })
+        return sendJson(res, 200, clientUsageSnapshot(tracker, config.billingAllocationCredits, billing.configured))
+      },
+    }), 'github-copilot: usage route')
+  })
 
   ctx.effect(function* githubCopilotLifecycle() {
     yield ctx.llm.registerAdapter([PROVIDER], adapter)
