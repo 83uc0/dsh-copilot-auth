@@ -2,7 +2,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { memoizeAsync, resolveCliPath, toRuntimeModel, toSdkTools, toSessionError } from '../src/copilot-runtime.js'
+import { AsyncQueue } from '../src/async-queue.js'
+import { CopilotRuntimeManager, memoizeAsync, resolveCliPath, toRuntimeModel, toSdkTools, toSessionError, type ActiveRuntimeCall, type CopilotRuntime, type CopilotTransport, type RuntimeAuthStatus, type RuntimeEvent, type RuntimeModel } from '../src/copilot-runtime.js'
 
 const CLI_NAME = process.platform === 'win32' ? 'copilot.cmd' : 'copilot'
 
@@ -183,5 +184,67 @@ describe('memoizeAsync', () => {
     await memoized.run()
     expect(memoized.reset()).toBe(true)
     expect(memoized.reset()).toBe(false)
+  })
+})
+
+describe('CopilotRuntimeManager', () => {
+  class ManagedCall implements ActiveRuntimeCall {
+    readonly events: AsyncIterable<RuntimeEvent> = new AsyncQueue<RuntimeEvent>()
+    async respondToTool(): Promise<void> {}
+    async abort(): Promise<void> {}
+    async dispose(): Promise<void> {}
+  }
+
+  class Runtime implements CopilotRuntime {
+    stopped = false
+
+    async start(): Promise<void> {}
+    async stop(): Promise<void> { this.stopped = true }
+    async getAuthStatus(): Promise<RuntimeAuthStatus> { return { isAuthenticated: true } }
+    async listModels(): Promise<readonly RuntimeModel[]> { return [] }
+    async startCall(): Promise<ActiveRuntimeCall> {
+      return new ManagedCall()
+    }
+  }
+
+  it('creates direct transport by default and reuses it without rotation', async () => {
+    const transports: CopilotTransport[] = []
+    const runtimes: Runtime[] = []
+    const manager = new CopilotRuntimeManager({ create: (transport) => { transports.push(transport); const runtime = new Runtime(); runtimes.push(runtime); return runtime } })
+    await manager.listModels()
+    await manager.listModels()
+    expect(transports).toEqual([{ mode: 'direct' }])
+    expect(runtimes[0]?.stopped).toBe(false)
+  })
+
+  it('changes transport only after active call drains, then creates next generation', async () => {
+    const transports: CopilotTransport[] = []
+    const runtimes: Runtime[] = []
+    const manager = new CopilotRuntimeManager({ create: (transport) => { transports.push(transport); const runtime = new Runtime(); runtimes.push(runtime); return runtime } })
+    const call = await manager.startCall({ model: 'gpt-test', prompt: 'safe test content', tools: [] })
+    const rotation = manager.setTransport({ mode: 'edgee', proxyUrl: 'http://127.0.0.1:41500', caPath: '/public/ca.pem' })
+    await Promise.resolve()
+    expect(runtimes[0]?.stopped).toBe(false)
+    let rotated = false
+    void rotation.then(() => { rotated = true })
+    await Promise.resolve()
+    expect(rotated).toBe(false)
+    await call.dispose()
+    await rotation
+    expect(runtimes[0]?.stopped).toBe(true)
+    expect(transports).toEqual([{ mode: 'direct' }])
+    await manager.listModels()
+    expect(transports).toEqual([{ mode: 'direct' }, { mode: 'edgee', proxyUrl: 'http://127.0.0.1:41500', caPath: '/public/ca.pem' }])
+  })
+
+  it('rotates Edgee back to direct without exposing secrets', async () => {
+    const transports: CopilotTransport[] = []
+    const manager = new CopilotRuntimeManager({ create: (transport) => { transports.push(transport); return new Runtime() } }, { mode: 'edgee', proxyUrl: 'http://127.0.0.1:41500', caPath: '/public/ca.pem' })
+    await manager.start()
+    await manager.setTransport({ mode: 'direct' })
+    expect(transports).toEqual([{ mode: 'edgee', proxyUrl: 'http://127.0.0.1:41500', caPath: '/public/ca.pem' }])
+    await manager.start()
+    expect(transports.at(-1)).toEqual({ mode: 'direct' })
+    expect(JSON.stringify(transports)).not.toMatch(/token|authorization|credential/i)
   })
 })

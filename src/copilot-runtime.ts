@@ -110,12 +110,22 @@ export interface CopilotRuntime {
   startCall(request: RuntimeCallRequest): Promise<ActiveRuntimeCall>
 }
 
+export interface CopilotTransport {
+  readonly mode: 'direct' | 'edgee'
+  readonly proxyUrl?: string
+  readonly caPath?: string
+}
+
+export interface CopilotRuntimeFactory {
+  create(transport: CopilotTransport): CopilotRuntime
+}
+
 export interface LoginRunner {
   login(signal: AbortSignal): Promise<void>
   logout(signal: AbortSignal): Promise<void>
 }
 
-function childEnvironment(): NodeJS.ProcessEnv {
+function childEnvironment(transport: CopilotTransport = { mode: 'direct' }): NodeJS.ProcessEnv {
   const allowed = [
     'HOME',
     'PATH',
@@ -128,7 +138,11 @@ function childEnvironment(): NodeJS.ProcessEnv {
     'WAYLAND_DISPLAY',
     'DBUS_SESSION_BUS_ADDRESS',
   ] as const
-  return Object.fromEntries(allowed.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]]))
+  return Object.fromEntries([
+    ...allowed.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]]),
+    ...(transport.mode === 'edgee' && transport.proxyUrl !== undefined ? [['HTTPS_PROXY', transport.proxyUrl], ['https_proxy', transport.proxyUrl]] : []),
+    ...(transport.mode === 'edgee' && transport.caPath !== undefined ? [['NODE_EXTRA_CA_CERTS', transport.caPath]] : []),
+  ])
 }
 
 export class CopilotCliLoginRunner implements LoginRunner {
@@ -395,8 +409,9 @@ export class OfficialCopilotRuntime implements CopilotRuntime {
     workingDirectory: string,
     executable = 'copilot',
     baseDirectory = process.env.COPILOT_HOME ?? join(homedir(), '.copilot'),
+    transport: CopilotTransport = { mode: 'direct' },
   ) {
-    const env = childEnvironment()
+    const env = childEnvironment(transport)
     const resolvedPath = resolveCliPath(executable, env)
     this.#client = new CopilotClient({
       connection: resolvedPath === undefined ? RuntimeConnection.forStdio() : RuntimeConnection.forStdio({ path: resolvedPath }),
@@ -446,5 +461,126 @@ export class OfficialCopilotRuntime implements CopilotRuntime {
     const call = new OfficialActiveCall(session)
     void call.send(request.prompt)
     return call
+  }
+}
+
+class ManagedActiveCall implements ActiveRuntimeCall {
+  #disposed = false
+
+  constructor(
+    private readonly call: ActiveRuntimeCall,
+    private readonly release: () => Promise<void>,
+  ) {}
+
+  get events(): AsyncIterable<RuntimeEvent> { return this.call.events }
+
+  respondToTool(requestId: string, result: string, isError: boolean): Promise<void> {
+    return this.call.respondToTool(requestId, result, isError)
+  }
+
+  abort(): Promise<void> { return this.call.abort() }
+
+  async dispose(): Promise<void> {
+    if (this.#disposed) return
+    this.#disposed = true
+    try {
+      await this.call.dispose()
+    } finally {
+      await this.release()
+    }
+  }
+}
+
+export class CopilotRuntimeManager implements CopilotRuntime {
+  #runtime: CopilotRuntime | undefined
+  #transport: CopilotTransport
+  #activeCalls = 0
+  #drainWaiters: Array<() => void> = []
+  #rotation: Promise<void> | undefined
+  #rotationRequested = false
+
+  constructor(
+    private readonly factory: CopilotRuntimeFactory,
+    initialTransport: CopilotTransport = { mode: 'direct' },
+  ) {
+    this.#transport = initialTransport
+  }
+
+  get transport(): CopilotTransport { return this.#transport }
+
+  async setTransport(transport: CopilotTransport): Promise<void> {
+    if (transport.mode === this.#transport.mode && transport.proxyUrl === this.#transport.proxyUrl && transport.caPath === this.#transport.caPath) return
+    this.#transport = transport
+    this.#rotationRequested = true
+    await this.#scheduleRotation()
+  }
+
+  async start(): Promise<void> { await this.#current().start() }
+
+  async stop(): Promise<void> {
+    await this.#waitForDrain()
+    const runtime = this.#runtime
+    this.#runtime = undefined
+    await runtime?.stop()
+  }
+
+  async getAuthStatus(): Promise<RuntimeAuthStatus> { return this.#current().getAuthStatus() }
+
+  async listModels(): Promise<readonly RuntimeModel[]> { return this.#current().listModels() }
+
+  async startCall(request: RuntimeCallRequest): Promise<ActiveRuntimeCall> {
+    const runtime = this.#current()
+    this.#activeCalls += 1
+    let call: ActiveRuntimeCall
+    try {
+      call = await runtime.startCall(request)
+    } catch (error) {
+      this.#activeCalls -= 1
+      this.#releaseDrainWaiters()
+      throw error
+    }
+    return new ManagedActiveCall(call, async () => {
+      this.#activeCalls -= 1
+      if (this.#activeCalls === 0) {
+        this.#releaseDrainWaiters()
+        await this.#scheduleRotation()
+      }
+    })
+  }
+
+  async #scheduleRotation(): Promise<void> {
+    const previous = this.#rotation
+    const rotation = (previous ?? Promise.resolve()).then(() => this.#rotateWhenIdle())
+    this.#rotation = rotation.finally(() => {
+      if (this.#rotation === rotation) this.#rotation = undefined
+    })
+    await rotation
+  }
+
+  async #rotateWhenIdle(): Promise<void> {
+    if (!this.#rotationRequested) return
+    if (this.#activeCalls > 0) {
+      await this.#waitForDrain()
+    }
+    const runtime = this.#runtime
+    if (runtime === undefined) return
+    this.#rotationRequested = false
+    this.#runtime = undefined
+    await runtime.stop()
+  }
+
+  #current(): CopilotRuntime {
+    this.#runtime ??= this.factory.create(this.#transport)
+    return this.#runtime
+  }
+
+  #waitForDrain(): Promise<void> {
+    if (this.#activeCalls === 0) return Promise.resolve()
+    return new Promise((resolve) => this.#drainWaiters.push(resolve))
+  }
+
+  #releaseDrainWaiters(): void {
+    const waiters = this.#drainWaiters.splice(0)
+    for (const resolve of waiters) resolve()
   }
 }

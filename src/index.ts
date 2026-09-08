@@ -7,7 +7,7 @@ import { GitHubCopilotAdapter, PROVIDER } from './adapter.js'
 import { CopilotAuthController } from './auth.js'
 import { BillingReportClient } from './billing-report.js'
 import { commandDefinitions } from './commands.js'
-import { CopilotCliLoginRunner, OfficialCopilotRuntime } from './copilot-runtime.js'
+import { CopilotCliLoginRunner, CopilotRuntimeManager, OfficialCopilotRuntime } from './copilot-runtime.js'
 import { UsageStore, defaultStorePath } from './usage-store.js'
 import { ConsumptionTracker, type InputConventionConfig } from './usage-tracker.js'
 
@@ -120,7 +120,15 @@ function parseConfig(raw: unknown): PluginConfig {
 export function apply(ctx: Context, rawConfig: unknown = {}): void {
   const config = parseConfig(rawConfig)
   const logger = { info: (message: string) => ctx.logger.info(message) }
-  const runtime = new OfficialCopilotRuntime(process.cwd())
+  const edgee = ctx.get('edgeeTransport') as { readonly state?: { readonly enabled: boolean; readonly proxyUrl: string; readonly caPath: string } } | undefined
+  const initialState = edgee?.state
+  const runtime = new CopilotRuntimeManager({ create: (transport) => new OfficialCopilotRuntime(process.cwd(), 'copilot', undefined, transport) },
+    initialState?.enabled === true
+      ? { mode: 'edgee', proxyUrl: initialState.proxyUrl, caPath: initialState.caPath }
+      : { mode: 'direct' })
+  const releaseRuntimeService = typeof (ctx as any).provide === 'function'
+    ? (ctx as any).provide('copilotTransport', runtime)
+    : undefined
   const tracker = new ConsumptionTracker({
     ...(config.usageTracking === undefined ? {} : { enabled: config.usageTracking }),
     ...(config.tokenInputConvention === undefined ? {} : { convention: config.tokenInputConvention }),
@@ -175,6 +183,7 @@ export function apply(ctx: Context, rawConfig: unknown = {}): void {
       yield ctx.commands.register(command)
     }
     yield async () => adapter.dispose()
+    yield async () => releaseRuntimeService?.()
   }, 'official GitHub Copilot adapter lifecycle')
 }
 
